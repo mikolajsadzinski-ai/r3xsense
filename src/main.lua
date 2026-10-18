@@ -1,418 +1,650 @@
-
 --[[
-    lettium - Main
+    r3xsense
     File: src/main.lua
+    Version: 1.0.0
 
-    Connects:
-      - config.lua
-      - core/mobile.lua
-      - ui/theme.lua
-      - ui/components.lua
-      - tabs/settings.lua
-      - tabs/visuals.lua
-
-    Intended for your own Roblox Studio experience.
+    Main application controller
+    Loads project modules and initializes the GUI.
 ]]
 
---// Services
 local Players = game:GetService("Players")
-local UserInputService = game:GetService("UserInputService")
-local RunService = game:GetService("RunService")
 
---// Local player
-local LocalPlayer = Players.LocalPlayer
-local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
-
---// Main application
 local App = {
-    Name = "lettium",
+    Name = "r3xsense",
     Version = "1.0.0",
-
     Running = false,
     Destroyed = false,
 
-    Connections = {},
     Modules = {},
     Tabs = {},
+    Connections = {},
 
     UI = {},
+
     State = {
         CurrentTab = "Settings",
         Visible = true,
     },
 }
 
---// Safe module loader
-local function LoadModule(name, moduleScript)
-    if not moduleScript then
-        warn("[lettium] Missing module:", name)
+local Player = Players.LocalPlayer
+
+if not Player then
+    error("[r3xsense] This application must run on the client")
+end
+
+local PlayerGui = Player:WaitForChild("PlayerGui")
+
+--// Connection management
+
+function App:Connect(Signal, Callback)
+    local Connection = Signal:Connect(Callback)
+
+    table.insert(self.Connections, Connection)
+
+    return Connection
+end
+
+function App:DisconnectAll()
+    for _, Connection in ipairs(self.Connections) do
+        if Connection.Connected then
+            Connection:Disconnect()
+        end
+    end
+
+    table.clear(self.Connections)
+end
+
+--// Module loading
+
+function App:LoadModule(Name, ModuleScript)
+    if not ModuleScript then
+        warn("[r3xsense] Missing module: " .. Name)
         return nil
     end
 
-    local success, result = pcall(require, moduleScript)
-
-    if not success then
-        warn("[lettium] Failed to load " .. name .. ": " .. tostring(result))
+    if not ModuleScript:IsA("ModuleScript") then
+        warn("[r3xsense] Expected ModuleScript: " .. Name)
         return nil
     end
 
-    App.Modules[name] = result
-    return result
-end
+    local Success, Result = pcall(require, ModuleScript)
 
---// Find a ModuleScript by path
-local function FindModule(parent, name)
-    if not parent then
+    if not Success then
+        warn(
+            "[r3xsense] Failed to load "
+            .. Name
+            .. ": "
+            .. tostring(Result)
+        )
+
         return nil
     end
 
-    local result = parent:FindFirstChild(name)
+    self.Modules[Name] = Result
 
-    if not result then
-        warn("[lettium] ModuleScript not found:", name)
-    end
-
-    return result
+    return Result
 end
 
---// Register connections for cleanup
-function App:Connect(signal, callback)
-    local connection = signal:Connect(callback)
-    table.insert(self.Connections, connection)
-    return connection
-end
-
---// Load project modules
 function App:LoadModules()
-    local source = script.Parent
-    local coreFolder = source:FindFirstChild("core")
-    local uiFolder = source:FindFirstChild("ui")
-    local tabsFolder = source:FindFirstChild("tabs")
+    local Source = script.Parent
 
-    self.Modules.Config = LoadModule(
+    local CoreFolder = Source:FindFirstChild("core")
+    local UIFolder = Source:FindFirstChild("ui")
+    local UtilsFolder = Source:FindFirstChild("utils")
+    local TabsFolder = Source:FindFirstChild("tabs")
+
+    self:LoadModule(
         "Config",
-        FindModule(source, "config")
+        Source:FindFirstChild("config")
     )
 
-    self.Modules.Theme = LoadModule(
+    self:LoadModule(
         "Theme",
-        FindModule(uiFolder, "theme")
+        UIFolder and UIFolder:FindFirstChild("theme")
     )
 
-    self.Modules.Components = LoadModule(
+    self:LoadModule(
         "Components",
-        FindModule(uiFolder, "components")
+        UIFolder and UIFolder:FindFirstChild("components")
     )
 
-    self.Modules.Mobile = LoadModule(
+    self:LoadModule(
+        "Animations",
+        UtilsFolder and UtilsFolder:FindFirstChild("animations")
+    )
+
+    self:LoadModule(
         "Mobile",
-        FindModule(coreFolder, "mobile")
+        CoreFolder and CoreFolder:FindFirstChild("mobile")
     )
 
-    self.Modules.Settings = LoadModule(
+    self:LoadModule(
         "Settings",
-        FindModule(tabsFolder, "settings")
+        TabsFolder and TabsFolder:FindFirstChild("settings")
     )
 
-    self.Modules.Visuals = LoadModule(
+    self:LoadModule(
         "Visuals",
-        FindModule(tabsFolder, "visuals")
+        TabsFolder and TabsFolder:FindFirstChild("visuals")
     )
 end
 
---// Read configuration safely
+--// Configuration
+
 function App:GetConfig()
     return self.Modules.Config or {}
 end
 
---// Create base GUI
+--// GUI construction
+
 function App:CreateUI()
-    local config = self:GetConfig()
-    local uiConfig = config.UI or {}
+    local Config = self:GetConfig()
+    local UIConfig = Config.UI or {}
+    local Theme = Config.Theme or {}
 
-    local screenGui = Instance.new("ScreenGui")
-    screenGui.Name = "lettiumUI"
-    screenGui.ResetOnSpawn = false
-    screenGui.IgnoreGuiInset = false
-    screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    screenGui.DisplayOrder = 10
+    local ScreenGui = Instance.new("ScreenGui")
 
-    local mainFrame = Instance.new("Frame")
-    mainFrame.Name = "MainFrame"
-    mainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
-    mainFrame.Position = UDim2.fromScale(0.5, 0.5)
-    mainFrame.Size = UDim2.fromOffset(
-        uiConfig.DefaultWidth or 340,
-        uiConfig.DefaultHeight or 400
+    ScreenGui.Name = "r3xsenseUI"
+    ScreenGui.ResetOnSpawn = false
+    ScreenGui.IgnoreGuiInset = false
+    ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    ScreenGui.DisplayOrder = 10
+
+    local MainFrame = Instance.new("Frame")
+
+    MainFrame.Name = "MainFrame"
+    MainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+    MainFrame.Position = UDim2.fromScale(0.5, 0.5)
+
+    MainFrame.Size = UDim2.fromOffset(
+        UIConfig.DefaultWidth or 620,
+        UIConfig.DefaultHeight or 420
     )
-    mainFrame.BorderSizePixel = 0
-    mainFrame.Visible = true
-    mainFrame.Parent = screenGui
 
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 8)
-    corner.Parent = mainFrame
+    MainFrame.BackgroundColor3 =
+        Theme.Background or Color3.fromRGB(17, 17, 22)
 
-    local stroke = Instance.new("UIStroke")
-    stroke.Thickness = 1
-    stroke.Transparency = 0.25
-    stroke.Parent = mainFrame
+    MainFrame.BorderSizePixel = 0
+    MainFrame.Visible = true
+    MainFrame.ClipsDescendants = true
+    MainFrame.Parent = ScreenGui
 
-    local topbar = Instance.new("Frame")
-    topbar.Name = "Topbar"
-    topbar.Size = UDim2.new(1, 0, 0, 38)
-    topbar.BorderSizePixel = 0
-    topbar.Parent = mainFrame
+    local MainCorner = Instance.new("UICorner")
 
-    local title = Instance.new("TextLabel")
-    title.Name = "Title"
-    title.BackgroundTransparency = 1
-    title.Position = UDim2.fromOffset(12, 0)
-    title.Size = UDim2.new(1, -24, 1, 0)
-    title.Font = Enum.Font.GothamBold
-    title.Text = tostring(uiConfig.Title or self.Name)
-    title.TextSize = 15
-    title.TextXAlignment = Enum.TextXAlignment.Left
-    title.Parent = topbar
+    MainCorner.CornerRadius = UDim.new(0, 8)
+    MainCorner.Parent = MainFrame
 
-    local separator = Instance.new("Frame")
-    separator.Name = "Separator"
-    separator.Position = UDim2.new(0, 0, 0, 38)
-    separator.Size = UDim2.new(1, 0, 0, 1)
-    separator.BorderSizePixel = 0
-    separator.Parent = mainFrame
+    local MainStroke = Instance.new("UIStroke")
 
-    local sidebar = Instance.new("Frame")
-    sidebar.Name = "Sidebar"
-    sidebar.Position = UDim2.fromOffset(0, 39)
-    sidebar.Size = UDim2.new(0, 105, 1, -39)
-    sidebar.BorderSizePixel = 0
-    sidebar.Parent = mainFrame
+    MainStroke.Color = Theme.Border
+        or Color3.fromRGB(55, 55, 68)
 
-    local sidebarLayout = Instance.new("UIListLayout")
-    sidebarLayout.Padding = UDim.new(0, 5)
-    sidebarLayout.SortOrder = Enum.SortOrder.LayoutOrder
-    sidebarLayout.Parent = sidebar
+    MainStroke.Thickness = UIConfig.BorderThickness or 1
+    MainStroke.Parent = MainFrame
 
-    local sidebarPadding = Instance.new("UIPadding")
-    sidebarPadding.PaddingTop = UDim.new(0, 8)
-    sidebarPadding.PaddingLeft = UDim.new(0, 6)
-    sidebarPadding.PaddingRight = UDim.new(0, 6)
-    sidebarPadding.Parent = sidebar
+    --// Topbar
 
-    local content = Instance.new("Frame")
-    content.Name = "Content"
-    content.Position = UDim2.new(0, 105, 0, 39)
-    content.Size = UDim2.new(1, -105, 1, -39)
-    content.BorderSizePixel = 0
-    content.Parent = mainFrame
+    local Topbar = Instance.new("Frame")
 
-    local contentPadding = Instance.new("UIPadding")
-    contentPadding.PaddingTop = UDim.new(0, 10)
-    contentPadding.PaddingBottom = UDim.new(0, 10)
-    contentPadding.PaddingLeft = UDim.new(0, 10)
-    contentPadding.PaddingRight = UDim.new(0, 10)
-    contentPadding.Parent = content
+    Topbar.Name = "Topbar"
+    Topbar.Size = UDim2.new(1, 0, 0, 40)
 
-    local pageLayout = Instance.new("UIPageLayout")
-    pageLayout.Name = "PageLayout"
-    pageLayout.SortOrder = Enum.SortOrder.LayoutOrder
-    pageLayout.EasingStyle = Enum.EasingStyle.Quad
-    pageLayout.EasingDirection = Enum.EasingDirection.Out
-    pageLayout.TweenTime = 0.18
-    pageLayout.Parent = content
+    Topbar.BackgroundColor3 =
+        Theme.SecondaryBackground
+        or Color3.fromRGB(23, 23, 30)
 
-    screenGui.Parent = PlayerGui
+    Topbar.BorderSizePixel = 0
+    Topbar.Parent = MainFrame
 
-    self.UI.ScreenGui = screenGui
-    self.UI.MainFrame = mainFrame
-    self.UI.Topbar = topbar
-    self.UI.Title = title
-    self.UI.Sidebar = sidebar
-    self.UI.Content = content
-    self.UI.PageLayout = pageLayout
+    local Title = Instance.new("TextLabel")
+
+    Title.Name = "Title"
+    Title.BackgroundTransparency = 1
+    Title.Position = UDim2.fromOffset(12, 0)
+    Title.Size = UDim2.new(1, -24, 1, 0)
+
+    Title.Font = UIConfig.BoldFont or Enum.Font.GothamBold
+    Title.Text = UIConfig.Title or "r3xsense"
+    Title.TextColor3 = Theme.Text or Color3.new(1, 1, 1)
+    Title.TextSize = UIConfig.TitleSize or 17
+    Title.TextXAlignment = Enum.TextXAlignment.Left
+    Title.Parent = Topbar
+
+    --// Separator
+
+    local Separator = Instance.new("Frame")
+
+    Separator.Name = "Separator"
+    Separator.Position = UDim2.fromOffset(0, 40)
+    Separator.Size = UDim2.new(1, 0, 0, 1)
+
+    Separator.BackgroundColor3 =
+        Theme.Border or Color3.fromRGB(55, 55, 68)
+
+    Separator.BorderSizePixel = 0
+    Separator.Parent = MainFrame
+
+    --// Sidebar
+
+    local Sidebar = Instance.new("Frame")
+
+    Sidebar.Name = "Sidebar"
+    Sidebar.Position = UDim2.fromOffset(0, 41)
+
+    Sidebar.Size = UDim2.new(
+        0,
+        Config.Sidebar and Config.Sidebar.Width or 120,
+        1,
+        -41
+    )
+
+    Sidebar.BackgroundColor3 =
+        Theme.SidebarBackground
+        or Color3.fromRGB(20, 20, 26)
+
+    Sidebar.BorderSizePixel = 0
+    Sidebar.Parent = MainFrame
+
+    local SidebarPadding = Instance.new("UIPadding")
+
+    SidebarPadding.PaddingTop = UDim.new(0, 10)
+    SidebarPadding.PaddingLeft = UDim.new(0, 7)
+    SidebarPadding.PaddingRight = UDim.new(0, 7)
+    SidebarPadding.Parent = Sidebar
+
+    local SidebarLayout = Instance.new("UIListLayout")
+
+    SidebarLayout.Padding = UDim.new(
+        0,
+        Config.Sidebar and Config.Sidebar.ButtonSpacing or 5
+    )
+
+    SidebarLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    SidebarLayout.Parent = Sidebar
+
+    --// Content container
+
+    local SidebarWidth =
+        Config.Sidebar and Config.Sidebar.Width or 120
+
+    local Content = Instance.new("Frame")
+
+    Content.Name = "Content"
+    Content.Position = UDim2.new(0, SidebarWidth, 0, 41)
+
+    Content.Size = UDim2.new(
+        1,
+        -SidebarWidth,
+        1,
+        -41
+    )
+
+    Content.BackgroundColor3 =
+        Theme.Background or Color3.fromRGB(17, 17, 22)
+
+    Content.BorderSizePixel = 0
+    Content.ClipsDescendants = true
+    Content.Parent = MainFrame
+
+    local ContentPadding = Instance.new("UIPadding")
+
+    ContentPadding.PaddingTop = UDim.new(0, 10)
+    ContentPadding.PaddingBottom = UDim.new(0, 10)
+    ContentPadding.PaddingLeft = UDim.new(0, 10)
+    ContentPadding.PaddingRight = UDim.new(0, 10)
+    ContentPadding.Parent = Content
+
+    local PageLayout = Instance.new("UIPageLayout")
+
+    PageLayout.Name = "PageLayout"
+    PageLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    PageLayout.EasingStyle = Enum.EasingStyle.Quart
+    PageLayout.EasingDirection = Enum.EasingDirection.Out
+    PageLayout.TweenTime = 0.18
+    PageLayout.Circular = false
+    PageLayout.Parent = Content
+
+    ScreenGui.Parent = PlayerGui
+
+    self.UI = {
+        ScreenGui = ScreenGui,
+        MainFrame = MainFrame,
+        Topbar = Topbar,
+        Title = Title,
+        Sidebar = Sidebar,
+        SidebarLayout = SidebarLayout,
+        Content = Content,
+        PageLayout = PageLayout,
+    }
 
     return self.UI
 end
 
---// Apply theme when the theme module supports it
-function App:ApplyTheme()
-    local theme = self.Modules.Theme
+--// Theme integration
 
-    if not theme then
+function App:ApplyTheme()
+    local Theme = self.Modules.Theme
+
+    if not Theme then
         return
     end
 
-    local success, err = pcall(function()
-        if type(theme.Apply) == "function" then
-            theme.Apply(self.UI, self)
-        elseif type(theme.Init) == "function" then
-            theme.Init(self.UI, self)
-        end
+    local ApplyFunction =
+        Theme.Apply or Theme.Init
+
+    if type(ApplyFunction) ~= "function" then
+        return
+    end
+
+    local Success, ErrorMessage = pcall(function()
+        ApplyFunction(self.UI, self)
     end)
 
-    if not success then
-        warn("[lettium] Theme error:", err)
+    if not Success then
+        warn(
+            "[r3xsense] Theme error: "
+            .. tostring(ErrorMessage)
+        )
     end
 end
 
---// Create a tab page
-function App:CreateTab(name, order)
-    if self.Tabs[name] then
-        return self.Tabs[name]
+--// Animation integration
+
+function App:PlayAnimation(Object, Properties, Duration)
+    local Animations = self.Modules.Animations
+
+    if not Animations then
+        return nil
     end
 
-    local page = Instance.new("ScrollingFrame")
-    page.Name = name .. "Page"
-    page.Size = UDim2.fromScale(1, 1)
-    page.BackgroundTransparency = 1
-    page.BorderSizePixel = 0
-    page.ScrollBarThickness = 3
-    page.CanvasSize = UDim2.new()
-    page.AutomaticCanvasSize = Enum.AutomaticSize.Y
-    page.LayoutOrder = order or 0
-    page.ScrollingDirection = Enum.ScrollingDirection.Y
-    page.Parent = self.UI.Content
+    if type(Animations.Tween) ~= "function" then
+        return nil
+    end
 
-    local layout = Instance.new("UIListLayout")
-    layout.Padding = UDim.new(0, 8)
-    layout.SortOrder = Enum.SortOrder.LayoutOrder
-    layout.Parent = page
+    return Animations.Tween(
+        Object,
+        Properties,
+        Duration
+    )
+end
 
-    local padding = Instance.new("UIPadding")
-    padding.PaddingRight = UDim.new(0, 4)
-    padding.PaddingBottom = UDim.new(0, 4)
-    padding.Parent = page
+--// Tab construction
 
-    local button = Instance.new("TextButton")
-    button.Name = name .. "Button"
-    button.Size = UDim2.new(1, 0, 0, 32)
-    button.BackgroundTransparency = 1
-    button.BorderSizePixel = 0
-    button.AutoButtonColor = true
-    button.Font = Enum.Font.GothamMedium
-    button.Text = name
-    button.TextSize = 12
-    button.LayoutOrder = order or 0
-    button.Parent = self.UI.Sidebar
+function App:CreateTab(Name, Order)
+    if self.Tabs[Name] then
+        return self.Tabs[Name]
+    end
 
-    local tabCorner = Instance.new("UICorner")
-    tabCorner.CornerRadius = UDim.new(0, 5)
-    tabCorner.Parent = button
+    local Config = self:GetConfig()
+    local Theme = Config.Theme or {}
+    local SidebarConfig = Config.Sidebar or {}
 
-    local tab = {
-        Name = name,
-        Page = page,
-        Button = button,
-        Layout = layout,
+    local Page = Instance.new("ScrollingFrame")
+
+    Page.Name = Name .. "Page"
+    Page.Size = UDim2.fromScale(1, 1)
+    Page.BackgroundTransparency = 1
+    Page.BorderSizePixel = 0
+    Page.ScrollBarThickness = 3
+    Page.ScrollingDirection = Enum.ScrollingDirection.Y
+    Page.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    Page.CanvasSize = UDim2.new()
+    Page.LayoutOrder = Order or 0
+    Page.Visible = true
+    Page.Parent = self.UI.Content
+
+    local PageLayout = Instance.new("UIListLayout")
+
+    PageLayout.Name = "PageLayout"
+    PageLayout.Padding = UDim.new(0, 8)
+    PageLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    PageLayout.Parent = Page
+
+    local PagePadding = Instance.new("UIPadding")
+
+    PagePadding.PaddingRight = UDim.new(0, 4)
+    PagePadding.PaddingBottom = UDim.new(0, 4)
+    PagePadding.Parent = Page
+
+    local Button = Instance.new("TextButton")
+
+    Button.Name = Name .. "Button"
+
+    Button.Size = UDim2.new(
+        1,
+        0,
+        0,
+        SidebarConfig.ButtonHeight or 36
+    )
+
+    Button.BackgroundColor3 =
+        Theme.ElementBackground
+        or Color3.fromRGB(29, 29, 37)
+
+    Button.BackgroundTransparency = 1
+    Button.BorderSizePixel = 0
+    Button.AutoButtonColor = false
+    Button.Font = Enum.Font.GothamMedium
+    Button.Text = Name
+    Button.TextColor3 =
+        Theme.SecondaryText or Color3.fromRGB(155, 155, 170)
+
+    Button.TextSize = SidebarConfig.TextSize or 12
+    Button.LayoutOrder = Order or 0
+    Button.Parent = self.UI.Sidebar
+
+    local ButtonCorner = Instance.new("UICorner")
+
+    ButtonCorner.CornerRadius = UDim.new(
+        0,
+        SidebarConfig.CornerRadius or 6
+    )
+
+    ButtonCorner.Parent = Button
+
+    local Tab = {
+        Name = Name,
+        Page = Page,
+        Button = Button,
+        Layout = PageLayout,
+        Order = Order or 0,
     }
 
-    self.Tabs[name] = tab
+    self.Tabs[Name] = Tab
 
-    self:Connect(button.Activated, function()
-        self:SelectTab(name)
+    self:Connect(Button.Activated, function()
+        self:SelectTab(Name)
     end)
 
-    return tab
+    local Animations = self.Modules.Animations
+
+    if Animations and type(Animations.ButtonHover) == "function" then
+        pcall(function()
+            Animations.ButtonHover(
+                Button,
+                Button.BackgroundColor3,
+                Theme.ElementHover
+            )
+        end)
+    end
+
+    return Tab
 end
 
---// Select tab
-function App:SelectTab(name)
-    local tab = self.Tabs[name]
+--// Tab selection
 
-    if not tab then
-        warn("[lettium] Unknown tab:", name)
+function App:SelectTab(Name)
+    local Tab = self.Tabs[Name]
+
+    if not Tab then
+        warn("[r3xsense] Unknown tab: " .. tostring(Name))
         return false
     end
 
-    self.State.CurrentTab = name
+    self.State.CurrentTab = Name
 
-    for tabName, entry in pairs(self.Tabs) do
-        entry.Button:SetAttribute("Selected", tabName == name)
+    local Config = self:GetConfig()
+    local Theme = Config.Theme or {}
+
+    for TabName, Entry in pairs(self.Tabs) do
+        local Selected = TabName == Name
+
+        Entry.Button.BackgroundTransparency =
+            Selected and 0 or 1
+
+        Entry.Button.BackgroundColor3 =
+            Selected
+            and (
+                Theme.ElementActive
+                or Color3.fromRGB(45, 45, 58)
+            )
+            or (
+                Theme.ElementBackground
+                or Color3.fromRGB(29, 29, 37)
+            )
+
+        Entry.Button.TextColor3 =
+            Selected
+            and (
+                Theme.Text
+                or Color3.fromRGB(240, 240, 245)
+            )
+            or (
+                Theme.SecondaryText
+                or Color3.fromRGB(155, 155, 170)
+            )
     end
 
-    self.UI.PageLayout:JumpTo(tab.Page)
+    local Success, ErrorMessage = pcall(function()
+        self.UI.PageLayout:JumpTo(Tab.Page)
+    end)
 
-    local theme = self.Modules.Theme
-    if theme and type(theme.SelectTab) == "function" then
-        pcall(theme.SelectTab, name, self)
-    end
+    if not Success then
+        warn(
+            "[r3xsense] Tab transition failed: "
+            .. tostring(ErrorMessage)
+        )
 
-    return true
-end
-
---// Initialize tab modules that expose Init
-function App:InitializeTabModule(moduleName, tabName)
-    local module = self.Modules[moduleName]
-    local tab = self.Tabs[tabName]
-
-    if not module or not tab then
-        return false
-    end
-
-    local success, err = pcall(function()
-        if type(module.Init) == "function" then
-            module.Init({
-                App = self,
-                Page = tab.Page,
-                Tab = tab,
-                UI = self.UI,
-                Config = self:GetConfig(),
-                Theme = self.Modules.Theme,
-                Components = self.Modules.Components,
-            })
+        for TabName, Entry in pairs(self.Tabs) do
+            Entry.Page.Visible = TabName == Name
         end
+    end
+
+    return true
+end
+
+--// Initialize settings and visuals modules
+
+function App:InitializeTabModule(ModuleName, TabName)
+    local Module = self.Modules[ModuleName]
+    local Tab = self.Tabs[TabName]
+
+    if not Module or not Tab then
+        warn(
+            "[r3xsense] Cannot initialize "
+            .. ModuleName
+            .. ": module or tab missing"
+        )
+
+        return false
+    end
+
+    if type(Module.Init) ~= "function" then
+        warn(
+            "[r3xsense] "
+            .. ModuleName
+            .. " must export an Init function"
+        )
+
+        return false
+    end
+
+    local Success, ErrorMessage = pcall(function()
+        Module.Init({
+            App = self,
+            Page = Tab.Page,
+            Tab = Tab,
+            UI = self.UI,
+            Config = self:GetConfig(),
+            Theme = self.Modules.Theme,
+            Components = self.Modules.Components,
+            Animations = self.Modules.Animations,
+            Mobile = self.Modules.Mobile,
+        })
     end)
 
-    if not success then
-        warn("[lettium] " .. moduleName .. " initialization failed:", err)
+    if not Success then
+        warn(
+            "[r3xsense] "
+            .. ModuleName
+            .. " initialization failed: "
+            .. tostring(ErrorMessage)
+        )
+
         return false
     end
 
     return true
 end
 
---// Connect mobile module
+--// Mobile initialization
+
 function App:InitializeMobile()
-    local mobile = self.Modules.Mobile
+    local Mobile = self.Modules.Mobile
 
-    if not mobile then
-        warn("[lettium] Mobile module unavailable.")
-        return
+    if not Mobile or type(Mobile.Init) ~= "function" then
+        warn("[r3xsense] Mobile module unavailable")
+        return false
     end
 
-    local success, err = pcall(function()
-        if type(mobile.Init) == "function" then
-            mobile.Init({
-                ScreenGui = self.UI.ScreenGui,
-                MainFrame = self.UI.MainFrame,
-                DragHandle = self.UI.Topbar,
-                App = self,
-                Config = self:GetConfig(),
-            })
-        end
+    local Config = self:GetConfig()
+
+    local Success, Result = pcall(function()
+        return Mobile.Init({
+            ScreenGui = self.UI.ScreenGui,
+            MainFrame = self.UI.MainFrame,
+            DragHandle = self.UI.Topbar,
+            Configuration = Config.Mobile or {},
+        })
     end)
 
-    if not success then
-        warn("[lettium] Mobile initialization failed:", err)
+    if not Success then
+        warn(
+            "[r3xsense] Mobile initialization failed: "
+            .. tostring(Result)
+        )
+
+        return false
     end
+
+    return Result ~= false
 end
 
---// Toggle visibility
-function App:SetVisible(visible)
-    if self.Destroyed or not self.UI.MainFrame then
+--// Window visibility
+
+function App:SetVisible(Visible)
+    if self.Destroyed then
         return
     end
 
-    self.State.Visible = visible == true
-    self.UI.MainFrame.Visible = self.State.Visible
+    Visible = Visible == true
+
+    self.State.Visible = Visible
+
+    local MainFrame = self.UI.MainFrame
+
+    if MainFrame then
+        MainFrame.Visible = Visible
+    end
 end
 
 function App:Toggle()
     self:SetVisible(not self.State.Visible)
 end
 
---// Cleanup
+--// Runtime cleanup
+
 function App:Destroy()
     if self.Destroyed then
         return
@@ -421,52 +653,72 @@ function App:Destroy()
     self.Destroyed = true
     self.Running = false
 
-    for _, connection in ipairs(self.Connections) do
-        if connection and connection.Connected then
-            connection:Disconnect()
-        end
+    self:DisconnectAll()
+
+    local Mobile = self.Modules.Mobile
+
+    if Mobile and type(Mobile.Destroy) == "function" then
+        pcall(function()
+            Mobile.Destroy()
+        end)
     end
 
-    table.clear(self.Connections)
+    local Animations = self.Modules.Animations
 
-    local mobile = self.Modules.Mobile
-    if mobile and type(mobile.Destroy) == "function" then
-        pcall(mobile.Destroy)
+    if Animations and type(Animations.Cleanup) == "function" then
+        pcall(function()
+            Animations.Cleanup()
+        end)
     end
 
-    if self.UI.ScreenGui then
-        self.UI.ScreenGui:Destroy()
+    local ScreenGui = self.UI.ScreenGui
+
+    if ScreenGui then
+        ScreenGui:Destroy()
     end
 
     table.clear(self.Tabs)
+    table.clear(self.Modules)
+    table.clear(self.UI)
 end
 
---// Start application
+--// Startup
+
 function App:Start()
     if self.Running or self.Destroyed then
-        return
+        return false
     end
 
     self:LoadModules()
+
     self:CreateUI()
     self:ApplyTheme()
 
-    -- Create the pages before initializing their modules.
     self:CreateTab("Settings", 1)
     self:CreateTab("Visuals", 2)
 
     self:InitializeTabModule("Settings", "Settings")
     self:InitializeTabModule("Visuals", "Visuals")
+
     self:InitializeMobile()
 
     self:SelectTab("Settings")
 
     self.Running = true
-    print("[lettium] " .. self.Name .. " v" .. self.Version .. " started.")
+
+    print(
+        "[r3xsense] "
+        .. self.Name
+        .. " v"
+        .. self.Version
+        .. " initialized"
+    )
+
+    return true
 end
 
---// Start
+--// Launch
+
 App:Start()
 
---// Return app object for other ModuleScripts
 return App
