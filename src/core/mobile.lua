@@ -1,22 +1,18 @@
 --[[
     r3xsense
     File: src/core/mobile.lua
+    Version: 1.1.0
 
-    Mobile support module
+    Mobile support module for Roblox Studio.
 
     Features:
-    - Responsive interface scaling
-    - Touch input support
-    - Mouse input support
-    - Draggable main window
-    - Mobile toggle button
+    - Responsive UI scaling
+    - Touch and mouse dragging
+    - Mobile visibility toggle
     - Viewport change detection
     - Screen boundary handling
-    - Enable and disable individual features
-    - Cleanup connections
     - Runtime configuration updates
-
-    Designed for a Roblox Studio project.
+    - Connection cleanup
 ]]
 
 local Mobile = {}
@@ -26,14 +22,11 @@ local UserInputService = game:GetService("UserInputService")
 local GuiService = game:GetService("GuiService")
 local Workspace = game:GetService("Workspace")
 
-local LocalPlayer = Players.LocalPlayer
-
-Mobile.Version = "1.0.0"
+Mobile.Version = "1.1.0"
 Mobile.Initialized = false
 
 Mobile.Config = {
     Enabled = true,
-
     Responsive = true,
     TouchEnabled = true,
     DraggableWindow = true,
@@ -76,15 +69,6 @@ Mobile.Objects = {
 }
 
 Mobile.Connections = {}
-Mobile.OriginalProperties = {}
-
-local function DisconnectConnection(Connection)
-    if Connection then
-        pcall(function()
-            Connection:Disconnect()
-        end)
-    end
-end
 
 local function RegisterConnection(Connection)
     if Connection then
@@ -96,7 +80,9 @@ end
 
 local function DisconnectAllConnections()
     for _, Connection in ipairs(Mobile.Connections) do
-        DisconnectConnection(Connection)
+        pcall(function()
+            Connection:Disconnect()
+        end)
     end
 
     table.clear(Mobile.Connections)
@@ -115,93 +101,94 @@ end
 local function GetViewportSize()
     local Camera = GetCamera()
 
-    if not Camera then
-        return Vector2.new(800, 600)
+    if Camera then
+        return Camera.ViewportSize
     end
 
-    return Camera.ViewportSize
-end
+    local Player = Players.LocalPlayer
+    local PlayerGui = Player and Player:FindFirstChildOfClass("PlayerGui")
 
-local function DetectMobile()
-    local TouchAvailable = UserInputService.TouchEnabled
-    local KeyboardAvailable = UserInputService.KeyboardEnabled
-    local MouseAvailable = UserInputService.MouseEnabled
+    if PlayerGui then
+        local Size = PlayerGui.AbsoluteSize
 
-    if TouchAvailable and not KeyboardAvailable then
-        return true
+        if Size.X > 0 and Size.Y > 0 then
+            return Vector2.new(Size.X, Size.Y)
+        end
     end
 
-    if TouchAvailable and not MouseAvailable then
-        return true
-    end
-
-    return false
+    return Vector2.new(800, 600)
 end
 
 local function GetSafeViewportSize()
     local Viewport = GetViewportSize()
 
-    local Success, Insets = pcall(function()
+    local Success, TopLeft, BottomRight = pcall(function()
         return GuiService:GetGuiInset()
     end)
 
-    if Success and Insets then
+    if Success and TopLeft and BottomRight then
         return Vector2.new(
-            Viewport.X,
-            math.max(0, Viewport.Y - Insets.Y)
+            math.max(1, Viewport.X - TopLeft.X - BottomRight.X),
+            math.max(1, Viewport.Y - TopLeft.Y - BottomRight.Y)
         )
     end
 
     return Viewport
 end
 
+local function DetectMobile()
+    return UserInputService.TouchEnabled
+        and not UserInputService.MouseEnabled
+end
+
+function Mobile.UpdateDeviceState()
+    Mobile.State.IsMobile = DetectMobile()
+    return Mobile.State.IsMobile
+end
+
 local function GetScaleForViewport(Viewport)
     local ReferenceWidth = math.max(
         1,
-        Mobile.Config.ReferenceWidth
+        tonumber(Mobile.Config.ReferenceWidth) or 620
     )
 
     local ReferenceHeight = math.max(
         1,
-        Mobile.Config.ReferenceHeight
+        tonumber(Mobile.Config.ReferenceHeight) or 420
+    )
+
+    local MinimumScale = math.clamp(
+        tonumber(Mobile.Config.MinimumScale) or 0.55,
+        0.25,
+        1
+    )
+
+    local MaximumScale = math.clamp(
+        tonumber(Mobile.Config.MaximumScale) or 1,
+        MinimumScale,
+        2
     )
 
     local WidthScale = Viewport.X / ReferenceWidth
     local HeightScale = Viewport.Y / ReferenceHeight
 
-    local Result = math.min(
-        WidthScale,
-        HeightScale,
-        Mobile.Config.MaximumScale
-    )
-
     return math.clamp(
-        Result,
-        Mobile.Config.MinimumScale,
-        Mobile.Config.MaximumScale
+        math.min(WidthScale, HeightScale, MaximumScale),
+        MinimumScale,
+        MaximumScale
     )
 end
 
-local function GetScaledWindowSize()
+local function GetWindowSize()
     local Frame = Mobile.Objects.MainFrame
 
     if not IsValidGuiObject(Frame) then
-        return Vector2.new(0, 0)
+        return Vector2.zero
     end
 
-    local AbsoluteSize = Frame.AbsoluteSize
-
-    local ScaleObject = Mobile.Objects.ScaleObject
-    local Scale = 1
-
-    if ScaleObject and ScaleObject:IsA("UIScale") then
-        Scale = ScaleObject.Scale
-    end
-
-    return Vector2.new(
-        AbsoluteSize.X * Scale,
-        AbsoluteSize.Y * Scale
-    )
+    -- AbsoluteSize represents the GUI's measured size.
+    -- Do not multiply by UIScale a second time.
+    return Frame.AbsoluteSize
 end
 
 local function ClampWindowPosition()
@@ -216,11 +203,21 @@ local function ClampWindowPosition()
     end
 
     local Viewport = GetSafeViewportSize()
-    local WindowSize = GetScaledWindowSize()
+    local WindowSize = GetWindowSize()
+
+    local ScaleObject = Mobile.Objects.ScaleObject
+    local Scale = 1
+
+    if ScaleObject and ScaleObject.Parent then
+        Scale = ScaleObject.Scale
+    end
+
+    local Width = WindowSize.X * Scale
+    local Height = WindowSize.Y * Scale
 
     local Padding = math.max(
         0,
-        Mobile.Config.ScreenPadding
+        tonumber(Mobile.Config.ScreenPadding) or 12
     )
 
     local Position = Frame.Position
@@ -236,36 +233,18 @@ local function ClampWindowPosition()
 
     local MaximumX = math.max(
         MinimumX,
-        Viewport.X - WindowSize.X - Padding
+        Viewport.X - Width - Padding
     )
 
     local MaximumY = math.max(
         MinimumY,
-        Viewport.Y - WindowSize.Y - Padding
-    )
-
-    local ClampedX = math.clamp(
-        CurrentX,
-        MinimumX,
-        MaximumX
-    )
-
-    local ClampedY = math.clamp(
-        CurrentY,
-        MinimumY,
-        MaximumY
+        Viewport.Y - Height - Padding
     )
 
     Frame.Position = UDim2.fromOffset(
-        ClampedX,
-        ClampedY
+        math.clamp(CurrentX, MinimumX, MaximumX),
+        math.clamp(CurrentY, MinimumY, MaximumY)
     )
-end
-
-function Mobile.UpdateDeviceState()
-    Mobile.State.IsMobile = DetectMobile()
-
-    return Mobile.State.IsMobile
 end
 
 function Mobile.UpdateScale()
@@ -285,25 +264,21 @@ function Mobile.UpdateScale()
 
     local ScaleObject = Mobile.Objects.ScaleObject
 
-    if not ScaleObject then
+    if not ScaleObject or not ScaleObject.Parent then
         ScaleObject = Instance.new("UIScale")
         ScaleObject.Name = "R3XMobileScale"
+        ScaleObject.Scale = 1
         ScaleObject.Parent = Frame
 
         Mobile.Objects.ScaleObject = ScaleObject
     end
 
-    if not ScaleObject:IsA("UIScale") then
-        warn("[r3xsense] ScaleObject must be a UIScale")
-        return
-    end
+    Mobile.UpdateDeviceState()
 
     local Viewport = GetSafeViewportSize()
-    local IsMobile = Mobile.UpdateDeviceState()
-
     local Scale = 1
 
-    if IsMobile or Mobile.Config.ScaleOnDesktop then
+    if Mobile.State.IsMobile or Mobile.Config.ScaleOnDesktop then
         Scale = GetScaleForViewport(Viewport)
     end
 
@@ -330,15 +305,14 @@ function Mobile.SetResponsive(Enabled)
         end
 
         Mobile.State.CurrentScale = 1
+        ClampWindowPosition()
     end
 end
 
 function Mobile.SetTouchEnabled(Enabled)
     Mobile.Config.TouchEnabled = Enabled == true
 
-    if not Mobile.Config.TouchEnabled
-        and Mobile.State.IsDragging then
-
+    if not Mobile.Config.TouchEnabled then
         Mobile.State.IsDragging = false
     end
 end
@@ -371,11 +345,7 @@ function Mobile.SetScaleLimits(Minimum, Maximum)
         return false
     end
 
-    Mobile.Config.MinimumScale = math.clamp(
-        Minimum,
-        0.25,
-        1
-    )
+    Mobile.Config.MinimumScale = math.clamp(Minimum, 0.25, 1)
 
     Mobile.Config.MaximumScale = math.clamp(
         Maximum,
@@ -384,7 +354,6 @@ function Mobile.SetScaleLimits(Minimum, Maximum)
     )
 
     Mobile.UpdateScale()
-
     return true
 end
 
@@ -392,11 +361,7 @@ function Mobile.SetReferenceSize(Width, Height)
     Width = tonumber(Width)
     Height = tonumber(Height)
 
-    if not Width or not Height then
-        return false
-    end
-
-    if Width <= 0 or Height <= 0 then
+    if not Width or not Height or Width <= 0 or Height <= 0 then
         return false
     end
 
@@ -404,13 +369,11 @@ function Mobile.SetReferenceSize(Width, Height)
     Mobile.Config.ReferenceHeight = Height
 
     Mobile.UpdateScale()
-
     return true
 end
 
 function Mobile.SetWindowVisible(Visible)
     Visible = Visible == true
-
     Mobile.State.WindowVisible = Visible
 
     local Frame = Mobile.Objects.MainFrame
@@ -427,25 +390,17 @@ function Mobile.SetWindowVisible(Visible)
 end
 
 function Mobile.ToggleWindow()
-    Mobile.SetWindowVisible(
-        not Mobile.State.WindowVisible
-    )
+    Mobile.SetWindowVisible(not Mobile.State.WindowVisible)
 end
 
 local function CreateMobileToggle()
     local ScreenGui = Mobile.Objects.ScreenGui
 
-    if not ScreenGui then
+    if not ScreenGui or not Mobile.Config.ShowMobileToggle then
         return nil
     end
 
-    if not Mobile.Config.ShowMobileToggle then
-        return nil
-    end
-
-    local Existing = ScreenGui:FindFirstChild(
-        "R3XMobileToggle"
-    )
+    local Existing = ScreenGui:FindFirstChild("R3XMobileToggle")
 
     if Existing then
         Existing:Destroy()
@@ -462,38 +417,29 @@ local function CreateMobileToggle()
         Mobile.Config.ToggleHeight
     )
 
-    Button.BackgroundColor3 =
-        Color3.fromRGB(30, 30, 38)
-
+    Button.BackgroundColor3 = Color3.fromRGB(30, 30, 38)
     Button.BackgroundTransparency = 0.05
     Button.BorderSizePixel = 0
 
     Button.Text = "Open r3xsense"
     Button.TextColor3 = Color3.fromRGB(245, 245, 250)
-
     Button.TextSize = 14
     Button.Font = Enum.Font.GothamBold
 
     Button.AutoButtonColor = true
     Button.Active = true
     Button.Selectable = true
-
     Button.ZIndex = 100
     Button.Visible = not Mobile.State.WindowVisible
     Button.Parent = ScreenGui
 
     local Corner = Instance.new("UICorner")
-
-    Corner.Name = "Corner"
     Corner.CornerRadius = UDim.new(0, 8)
     Corner.Parent = Button
 
     local Stroke = Instance.new("UIStroke")
-
-    Stroke.Name = "Stroke"
     Stroke.Color = Color3.fromRGB(75, 75, 90)
     Stroke.Thickness = 1
-    Stroke.Transparency = 0.15
     Stroke.Parent = Button
 
     RegisterConnection(Button.Activated:Connect(function()
@@ -521,27 +467,19 @@ function Mobile.SetMobileToggleEnabled(Enabled)
 
     if not Toggle or not Toggle.Parent then
         CreateMobileToggle()
-    end
-
-    if Mobile.Objects.MobileToggle then
-        Mobile.Objects.MobileToggle.Visible =
-            not Mobile.State.WindowVisible
+    elseif Toggle then
+        Toggle.Visible = not Mobile.State.WindowVisible
     end
 end
 
 function Mobile.SetToggleText(Text)
     local Toggle = Mobile.Objects.MobileToggle
 
-    if not Toggle then
-        return false
-    end
-
-    if typeof(Text) ~= "string" then
+    if not Toggle or typeof(Text) ~= "string" then
         return false
     end
 
     Toggle.Text = Text
-
     return true
 end
 
@@ -576,33 +514,25 @@ end
 
 local function ConnectDragging()
     local Frame = Mobile.Objects.MainFrame
+    local Handle = Mobile.Objects.DragHandle
 
     if not IsValidGuiObject(Frame) then
         return false
     end
-
-    local Handle = Mobile.Objects.DragHandle
 
     if not IsValidGuiObject(Handle) then
         Handle = Frame
     end
 
     local Dragging = false
-    local DragInput = nil
+    local ActiveInput = nil
     local DragStart = nil
     local StartPosition = nil
-    local ActiveInput = nil
 
     RegisterConnection(Handle.InputBegan:Connect(function(Input)
-        if not Mobile.Config.Enabled then
-            return
-        end
-
-        if not Mobile.Config.DraggableWindow then
-            return
-        end
-
-        if not IsAllowedDragInput(Input) then
+        if not Mobile.Config.Enabled
+            or not Mobile.Config.DraggableWindow
+            or not IsAllowedDragInput(Input) then
             return
         end
 
@@ -616,46 +546,30 @@ local function ConnectDragging()
         StartPosition = Frame.Position
 
         Mobile.State.IsDragging = true
-
-        RegisterConnection(Input.Changed:Connect(function()
-            if Input.UserInputState == Enum.UserInputState.End then
-                if ActiveInput == Input then
-                    Dragging = false
-                    ActiveInput = nil
-
-                    Mobile.State.IsDragging = false
-
-                    ClampWindowPosition()
-                end
-            end
-        end))
-    end))
-
-    RegisterConnection(Handle.InputChanged:Connect(function(Input)
-        if Input.UserInputType == Enum.UserInputType.MouseMovement
-            or Input.UserInputType == Enum.UserInputType.Touch then
-
-            DragInput = Input
-        end
     end))
 
     RegisterConnection(UserInputService.InputChanged:Connect(function(Input)
-        if not Dragging then
+        if not Dragging or not ActiveInput then
             return
         end
 
-        if Input ~= DragInput
-            and Input ~= ActiveInput then
-            return
-        end
+        local IsMouseMove =
+            ActiveInput.UserInputType == Enum.UserInputType.MouseButton1
+            and Input.UserInputType == Enum.UserInputType.MouseMovement
 
-        if not StartPosition or not DragStart then
+        local IsTouchMove =
+            ActiveInput.UserInputType == Enum.UserInputType.Touch
+            and Input == ActiveInput
+
+        if not IsMouseMove and not IsTouchMove then
             return
         end
 
         local Delta = Input.Position - DragStart
-
-        local Threshold = Mobile.Config.DragThreshold
+        local Threshold = math.max(
+            0,
+            tonumber(Mobile.Config.DragThreshold) or 4
+        )
 
         if Delta.Magnitude < Threshold then
             return
@@ -669,25 +583,52 @@ local function ConnectDragging()
         )
     end))
 
+    RegisterConnection(UserInputService.InputEnded:Connect(function(Input)
+        if not Dragging or not ActiveInput then
+            return
+        end
+
+        local SameInput = Input == ActiveInput
+
+        local MouseReleased =
+            ActiveInput.UserInputType == Enum.UserInputType.MouseButton1
+            and Input.UserInputType == Enum.UserInputType.MouseButton1
+
+        if SameInput or MouseReleased then
+            Dragging = false
+            ActiveInput = nil
+
+            Mobile.State.IsDragging = false
+            ClampWindowPosition()
+        end
+    end))
+
     return true
 end
 
 local function ConnectViewportChanges()
+    local CameraConnection = nil
+
     local function ConnectCurrentCamera()
+        if CameraConnection then
+            CameraConnection:Disconnect()
+            CameraConnection = nil
+        end
+
         local Camera = GetCamera()
 
         if not Camera then
             return
         end
 
-        RegisterConnection(
-            Camera:GetPropertyChangedSignal("ViewportSize"):Connect(
-                function()
-                    Mobile.UpdateDeviceState()
-                    Mobile.UpdateScale()
-                end
-            )
-        )
+        CameraConnection = Camera:GetPropertyChangedSignal(
+            "ViewportSize"
+        ):Connect(function()
+            Mobile.UpdateDeviceState()
+            Mobile.UpdateScale()
+        end)
+
+        RegisterConnection(CameraConnection)
 
         Mobile.UpdateScale()
     end
@@ -707,12 +648,11 @@ function Mobile.ApplyConfiguration(Configuration)
     end
 
     for Key, Value in pairs(Configuration) do
-        if Mobile.Config[Key] ~= nil then
-            local ExistingValue = Mobile.Config[Key]
+        local ExistingValue = Mobile.Config[Key]
 
-            if typeof(Value) == typeof(ExistingValue) then
-                Mobile.Config[Key] = Value
-            end
+        if ExistingValue ~= nil
+            and typeof(Value) == typeof(ExistingValue) then
+            Mobile.Config[Key] = Value
         end
     end
 
@@ -752,17 +692,15 @@ function Mobile.Init(Options)
         return false
     end
 
-    Options = Options or {}
-
     if typeof(Options) ~= "table" then
-        warn("[r3xsense] Init expects a configuration table")
-        return false
+        Options = {}
     end
 
     local ScreenGui = Options.ScreenGui
     local MainFrame = Options.MainFrame
 
-    if not ScreenGui or not ScreenGui:IsA("ScreenGui") then
+    if not ScreenGui
+        or not ScreenGui:IsA("ScreenGui") then
         warn("[r3xsense] Init requires a ScreenGui")
         return false
     end
@@ -782,10 +720,13 @@ function Mobile.Init(Options)
         Mobile.ApplyConfiguration(Options.Configuration)
     end
 
+    if not Mobile.Config.Enabled then
+        Mobile.Initialized = false
+        return false
+    end
+
     Mobile.UpdateDeviceState()
-
     Mobile.State.WindowVisible = MainFrame.Visible
-
     Mobile.Initialized = true
 
     if Mobile.Config.ShowMobileToggle then
@@ -819,12 +760,11 @@ function Mobile.Destroy()
     DisconnectAllConnections()
 
     local ScaleObject = Mobile.Objects.ScaleObject
+    local Toggle = Mobile.Objects.MobileToggle
 
     if ScaleObject then
         ScaleObject:Destroy()
     end
-
-    local Toggle = Mobile.Objects.MobileToggle
 
     if Toggle then
         Toggle:Destroy()
